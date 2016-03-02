@@ -1,6 +1,6 @@
 clear;
 
-data_path='E:\Desktop\Ben_trial\';
+data_path='E:\anand_animation\';
 
 fn={'rousettus_41'};
 d2=1; %2d data only
