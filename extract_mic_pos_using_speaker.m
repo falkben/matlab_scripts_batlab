@@ -2,11 +2,13 @@ clear;
 
 diag=0;
 
+extract_sig=1; %or use whole signal to do xcorr - slower but perhaps better
+
 base_dir='F:\small_space_beampattern\analysis\';
 
 mic_data_path='..\mic_data\';
 datadate='20150826';
-mic_recs=dir([base_dir mic_data_path 'speaker*' datadate '*calib*.mat']);
+speaker_positions=dir([base_dir mic_data_path 'speaker*' datadate '*calib*.mat']);
 
 num_ch=34;
 
@@ -19,81 +21,109 @@ speed_of_sound = 344; %50% humidity, 20 C, approximated
 load([base_dir 'speaker_pos_20150826_circle_fit.mat']);
 
 
-tof_ch=nan(length(mic_recs),num_ch);
-for k=1:length(mic_recs)
+tof_ch=nan(length(speaker_positions),num_ch);
+for k=1:length(speaker_positions)
   
-  load([base_dir mic_data_path mic_recs(k).name])
+  load([base_dir mic_data_path speaker_positions(k).name])
   
-  for ch=1:size(sig,2)-1
+  parfor ch=1:size(sig,2)-1 %replace with regular for loop if you don't have parallel computing toolbox
     search_sig=sig(:,end);
     ch_sig = sig(:,ch);
     
-    search_sig_square=search_sig.^2;
-    [pks,locs]=findpeaks(search_sig_square,fs,'minpeakheight',max(search_sig_square)/2,...
-      'minpeakdistance',time_btw_pulses-.05); %minpeakdistance in time (s)
-    
-    if diag
-      figure(1); clf;
-      t=((1:length(search_sig))-1)./fs;
-      plot(t,search_sig)
-      hold on;
-      plot(t,ch_sig);
-      title(['Channel ' num2str(ch)])
-    end
-    
-    tof=nan(length(locs),1);
-    for ll=1:length(locs)
-      sig_win=round([locs(ll)-max_tof,locs(ll)+max_tof]*fs);
-      sig_ex = search_sig(sig_win(1):sig_win(2));
+    if extract_sig
+      search_sig_square=search_sig.^2;
+      [~,locs]=findpeaks(search_sig_square,fs,'minpeakheight',max(search_sig_square)/2,...
+        'minpeakdistance',time_btw_pulses-.05); %minpeakdistance in time (s)
       
-      data_win=round([locs(ll)-max_tof,locs(ll)+max_tof]*fs);
-      data_ex = ch_sig(data_win(1):data_win(2));
+      tof=nan(length(locs),1);
+      for ll=1:length(locs)
+        sig_win=round([locs(ll)-max_tof,locs(ll)+max_tof]*fs);
+        sig_ex = search_sig(sig_win(1):sig_win(2));
+        
+        data_win=round([locs(ll)-max_tof,locs(ll)+max_tof]*fs);
+        data_ex = ch_sig(data_win(1):data_win(2));
+        
+        [xc,lags] = xcorr(sig_ex,data_ex);
+        
+        xc_envel=abs(hilbert(xc));
+        [~,indx]=max(xc_envel);
+        
+        tof(ll)=abs(lags(indx))/fs;
+        
+        if diag
+          figure(2); set(gcf, 'pos', [50 50 450 950]); clf;
+          axh1=subaxis(3,1,1,'m',.075,'mt',.04,'ml',.12);
+          plot((1:length(sig_ex))/fs*1e3,sig_ex);
+          hold on;
+          plot((1:length(sig_ex))/fs*1e3,data_ex);
+          plot(max_tof*1e3,max(sig_ex)*.9,'*r')
+          plot(max_tof*1e3 - lags(indx)/fs*1e3,max(sig_ex)*.9,'*g')
+          title(['Channel ' num2str(ch)])
+          axis tight;
+          
+          axh2=subaxis(3,1,2,'m',.075,'mt',.04,'ml',.12);
+          sig_comb=sig_ex+data_ex;
+          spectrogram(sig_comb,256,250,256,fs,'yaxis');
+          colorbar off
+          hold on;
+          plot(repmat(max_tof*1e3,2,1),[0 fs/2/1e3],'r')
+          plot( repmat(( max_tof - lags(indx)/fs )*1e3,2,1),[0 fs/2/1e3],'g')
+          
+          linkaxes([axh1 axh2],'x')
+          
+          subaxis(3,1,3,'m',.075,'mt',.04,'ml',.12)
+          plot(xc_envel)
+          hold on;
+          plot(abs(xc))
+          plot(indx,max(xc_envel),'*r')
+          a=axis;
+          axis([indx-pulse_width*fs/2 indx+pulse_width*fs/2 a(3:4)])
+          
+          drawnow;
+          pause(.01);
+        end
+      end
       
-      [xc,lags] = xcorr(sig_ex,data_ex);
+      tof_ch(k,ch)=nanmean(tof);
+    else
+      [xc,lags]=xcorr(search_sig,ch_sig);
       
       xc_envel=abs(hilbert(xc));
       [~,indx]=max(xc_envel);
-      
-      tof(ll)=abs(lags(indx))/fs;
-      
+      tof_ch(k,ch)=abs(lags(indx))/fs;
+            
       if diag
-        figure(2); set(gcf, 'pos', [50 50 450 950]); clf;
+        figure(1); clf; set(gcf, 'pos', [50 50 450 950]); clf;
+        t=((1:length(search_sig))-1)./fs;
         axh1=subaxis(3,1,1,'m',.075,'mt',.04,'ml',.12);
-        plot((1:length(sig_ex))/fs*1e3,sig_ex);
-        hold on;
-        plot((1:length(sig_ex))/fs*1e3,data_ex);
-        plot(max_tof*1e3,max(sig_ex)*.9,'*r')
-        plot(max_tof*1e3 - lags(indx)/fs*1e3,max(sig_ex)*.9,'*g')
-        title(['Channel ' num2str(ch)])
+        plot(t,search_sig)
+        axis tight;
+        title(['Speaker pos. ' num2str(k) ', Ch ' num2str(ch)])
+        
+        axh1=subaxis(3,1,2,'m',.075,'mt',.04,'ml',.12);
+        plot(ch_sig);
         axis tight;
         
-        axh2=subaxis(3,1,2,'m',.075,'mt',.04,'ml',.12);
-        sig_comb=sig_ex+data_ex;
-        spectrogram(sig_comb,256,250,256,fs,'yaxis');
-        colorbar off
-        hold on;
-        plot(repmat(max_tof*1e3,2,1),[0 fs/2/1e3],'r')
-        plot( repmat(( max_tof - lags(indx)/fs )*1e3,2,1),[0 fs/2/1e3],'g')
-        
-        linkaxes([axh1 axh2],'x')
-        
         subaxis(3,1,3,'m',.075,'mt',.04,'ml',.12)
-        plot(xc_envel)
+        tt=(-(length(xc_envel) - 1)/2 : length(xc_envel)/2 ) /fs;
+        plot(tt,xc_envel)
         hold on;
-        plot(abs(xc))
-        plot(indx,max(xc_envel),'*r')
+        %       plot(tt,abs(xc))
+        plot(tt(indx),max(xc_envel),'*r')
         a=axis;
-        axis([indx-pulse_width*fs/2 indx+pulse_width*fs/2 a(3:4)])
+        axis([tt(indx)-pulse_width tt(indx)+pulse_width a(3:4)])
         
         drawnow;
         pause(.01);
       end
     end
     
-    tof_ch(k,ch)=nanmean(tof);
   end
   
 end
+poolobj = gcp('nocreate');
+delete(poolobj);
+
 
 %euclidean distance formula
 
@@ -125,7 +155,7 @@ for ch=1:size(sig,2)-1
     B(m,:)=[2*(-x1+x2), 2*(-y1+y2), 2*(-z1+z2)];
   end
   
-	mic_pos(ch,:)=(B\C')';
+  mic_pos(ch,:)=(B\C')';
 end
 
 
@@ -136,11 +166,12 @@ ub = [5,5,5]; lb = [-5,-5,-5];
 c = 344;
 mic_infer_loc = zeros(length(tof_ch),3);
 for iCH=1:length(tof_ch)
-  notnanidx = ~isnan(tof_ch(:,ch));
+  notnanidx = ~isnan(tof_ch(:,iCH));
   if sum(notnanidx)<4
     mic_infer_loc(iCH,:) = nan(3,1);
   else
-    [mic_infer_loc(iCH,:),resnorm] = lsqnonlin(@(x) myfun_p(x,XYZc(notnanidx,:),tof_ch(notnanidx,iCH),c),x0,lb,ub);
+    [mic_infer_loc(iCH,:),resnorm] = lsqnonlin(@(x) myfun_p(x,XYZc(notnanidx,:),...
+      tof_ch(notnanidx,iCH),c),x0,lb,ub);
   end
 end
 
@@ -153,7 +184,8 @@ if diag
   axis equal, grid on; hold on;
   
   h=plot3(mic_infer_loc(:,3),mic_infer_loc(:,1),mic_infer_loc(:,2),'x');
-  text(mic_infer_loc(:,3),mic_infer_loc(:,1),mic_infer_loc(:,2),num2str( (1:length(mic_infer_loc) )' ),...
+  text(mic_infer_loc(:,3),mic_infer_loc(:,1),mic_infer_loc(:,2),...
+    num2str( (1:length(mic_infer_loc) )' ),...
     'color',h.Color)
   
 %   MP_speaker_old=load([base_dir 'mic_pos_via_speaker_20150826.mat']);
@@ -171,7 +203,8 @@ if diag
   h=plot3(tips(:,3),tips(:,1),tips(:,2),'s');
   text(tips(:,3),tips(:,1),tips(:,2),num2str((1:length(tips(:,1)))'),'color',h.Color)
   
-  legend({'Ben (system of linear eq.)','Wu-Jung (nonlinear)','Vicon'},'location','southoutside','orientation','horizontal')
+  legend({'Ben (system of linear eq.)','Wu-Jung (nonlinear)','Vicon'},...
+    'location','southoutside','orientation','horizontal')
   
   
   addpath('F:\small_space_beampattern\analysis')
